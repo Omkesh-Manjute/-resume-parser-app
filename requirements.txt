@@ -1,4 +1,4 @@
 streamlit
 pandas
-python-docx
-pdfplumber
+docx2txt
+sqlite3
