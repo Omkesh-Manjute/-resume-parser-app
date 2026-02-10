@@ -46,7 +46,7 @@ def extract_text(file):
             text = "\n".join([p.text for p in doc.paragraphs])
     
     except Exception as e:
-        st.error(f"Error extracting text: {str(e)}")
+        st.error(f"Error extracting text from {file.name}: {str(e)}")
         return ""
     
     return text.strip()
@@ -79,7 +79,11 @@ def parse_resume(text):
     # SKILLS - expanded keyword scan
     skill_list = ["python", "sql", "azure", "aws", "java", "react", "etl", "data", 
                   "spark", "javascript", "typescript", "node", "docker", "kubernetes",
-                  "tensorflow", "pytorch", "excel", "tableau", "powerbi"]
+                  "tensorflow", "pytorch", "excel", "tableau", "powerbi", "databricks",
+                  "snowflake", "airflow", "kafka", "redis", "mongodb", "postgresql",
+                  "machine learning", "ml", "ai", "data science", "analytics", "bi",
+                  "power bi", "looker", "quicksight", "redshift", "bigquery", "gcp",
+                  "devops", "ci/cd", "jenkins", "git", "linux", "bash", "shell"]
     
     found_skills = []
     text_lower = text.lower()
@@ -92,65 +96,143 @@ def parse_resume(text):
     
     return name, email, phone, skills, experience
 
+# ================= JD MATCHING =================
+
+def calculate_match_percentage(candidate_text, candidate_skills, jd_text):
+    """Calculate match percentage between candidate and JD"""
+    
+    if not jd_text:
+        return 0
+    
+    candidate_text_lower = candidate_text.lower()
+    jd_text_lower = jd_text.lower()
+    
+    # Extract keywords from JD (simple approach)
+    jd_words = set(re.findall(r'\b\w+\b', jd_text_lower))
+    # Filter out common words
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+                  'of', 'with', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has',
+                  'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may',
+                  'might', 'must', 'can', 'this', 'that', 'these', 'those', 'i', 'you',
+                  'he', 'she', 'it', 'we', 'they', 'them', 'their', 'what', 'which',
+                  'who', 'when', 'where', 'why', 'how'}
+    jd_keywords = jd_words - stop_words
+    
+    # Count matching keywords
+    matches = 0
+    total_keywords = len(jd_keywords)
+    
+    if total_keywords == 0:
+        return 0
+    
+    for keyword in jd_keywords:
+        if len(keyword) > 2 and keyword in candidate_text_lower:
+            matches += 1
+    
+    # Calculate percentage
+    match_percentage = int((matches / total_keywords) * 100)
+    
+    return min(match_percentage, 100)
+
 # ================= SESSION STATE =================
 
 if "selected_id" not in st.session_state:
     st.session_state.selected_id = None
 
-if "uploaded_files" not in st.session_state:
-    st.session_state.uploaded_files = set()
+if "jd_text" not in st.session_state:
+    st.session_state.jd_text = ""
 
 # ================= SIDEBAR =================
 
-st.sidebar.title("Filters")
+st.sidebar.title("🔍 Filters")
 
 name_filter = st.sidebar.text_input("Candidate Name")
 email_filter = st.sidebar.text_input("Email")
 skill_filter = st.sidebar.text_input("Skills (contains)")
+min_match = st.sidebar.slider("Minimum Match %", 0, 100, 0)
 
-delete_mode = st.sidebar.checkbox("Enable Delete Mode")
+delete_mode = st.sidebar.checkbox("🗑️ Enable Delete Mode")
 
 if st.sidebar.button("Clear All Filters"):
+    st.rerun()
+
+st.sidebar.divider()
+
+# JD Section in Sidebar
+st.sidebar.subheader("📋 Job Description")
+
+jd_input = st.sidebar.text_area(
+    "Paste JD Here",
+    value=st.session_state.jd_text,
+    height=300,
+    placeholder="Paste the job description here to match candidates..."
+)
+
+if st.sidebar.button("Apply JD"):
+    st.session_state.jd_text = jd_input
+    st.rerun()
+
+if st.sidebar.button("Clear JD"):
+    st.session_state.jd_text = ""
     st.rerun()
 
 # ================= MAIN UI =================
 
 st.title("🔥 ATS MONSTER RECRUITER UI")
 
-# ================= UPLOAD =================
+# ================= BULK UPLOAD =================
 
-file = st.file_uploader("Upload Resume", type=["pdf", "docx"])
+st.subheader("📤 Upload Resumes")
 
-if file:
-    # Create a unique identifier for this specific file upload
-    file_id = f"{file.name}_{file.size}"
-    
-    # Only process if this exact file hasn't been uploaded this session
-    if file_id not in st.session_state.uploaded_files:
+files = st.file_uploader(
+    "Upload Multiple Resumes (PDF or DOCX)",
+    type=["pdf", "docx"],
+    accept_multiple_files=True
+)
+
+if files:
+    if st.button("🚀 Process All Resumes", type="primary"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        with st.spinner("Processing resume..."):
-            text = extract_text(file)
+        uploaded_count = 0
+        error_count = 0
+        
+        for idx, file in enumerate(files):
+            status_text.text(f"Processing {file.name}...")
             
-            if text:
-                name, email, phone, skills, experience = parse_resume(text)
+            try:
+                text = extract_text(file)
                 
-                uid = str(uuid.uuid4())
-                
-                try:
+                if text:
+                    name, email, phone, skills, experience = parse_resume(text)
+                    uid = str(uuid.uuid4())
+                    
                     c.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?,?)",
                              (uid, name, email, phone, skills, experience, text))
                     conn.commit()
-                    
-                    st.session_state.uploaded_files.add(file_id)
-                    st.success(f"✅ Resume uploaded successfully: {name}")
-                    st.rerun()
-                
-                except sqlite3.IntegrityError:
-                    st.warning("This candidate may already exist in the database.")
-                except Exception as e:
-                    st.error(f"Database error: {str(e)}")
-            else:
-                st.error("Could not extract text from the file. Please check the file format.")
+                    uploaded_count += 1
+                else:
+                    error_count += 1
+            
+            except sqlite3.IntegrityError:
+                error_count += 1
+            except Exception as e:
+                st.warning(f"Error processing {file.name}: {str(e)}")
+                error_count += 1
+            
+            progress_bar.progress((idx + 1) / len(files))
+        
+        status_text.empty()
+        progress_bar.empty()
+        
+        st.success(f"✅ Uploaded {uploaded_count} resumes successfully!")
+        if error_count > 0:
+            st.warning(f"⚠️ {error_count} files failed to upload")
+        
+        st.rerun()
+
+st.divider()
 
 # ================= LOAD DATA =================
 
@@ -159,6 +241,21 @@ try:
 except Exception as e:
     st.error(f"Error loading data: {str(e)}")
     df = pd.DataFrame()
+
+# Calculate match percentage if JD is provided
+if not df.empty and st.session_state.jd_text:
+    df['match_percentage'] = df.apply(
+        lambda row: calculate_match_percentage(
+            row['content'], 
+            row['skills'], 
+            st.session_state.jd_text
+        ), 
+        axis=1
+    )
+    # Sort by match percentage
+    df = df.sort_values('match_percentage', ascending=False)
+else:
+    df['match_percentage'] = 0
 
 # APPLY FILTERS
 
@@ -171,6 +268,9 @@ if not df.empty:
     
     if skill_filter:
         df = df[df["skills"].str.contains(skill_filter, case=False, na=False)]
+    
+    if min_match > 0:
+        df = df[df["match_percentage"] >= min_match]
 
 # ================= DISPLAY =================
 
@@ -179,38 +279,51 @@ left, right = st.columns([1.3, 2])
 # ===== LEFT TABLE =====
 
 with left:
-    st.subheader(f"Candidates ({len(df)})")
+    st.subheader(f"👥 Candidates ({len(df)})")
+    
+    if st.session_state.jd_text:
+        st.caption("🎯 Sorted by JD Match")
     
     if df.empty:
-        st.info("No candidates found. Upload a resume to get started!")
+        st.info("No candidates found. Upload resumes to get started!")
     else:
         for i, row in df.iterrows():
-            col1, col2 = st.columns([5, 1])
+            col1, col2, col3 = st.columns([4, 1, 0.7])
             
             with col1:
                 button_label = f"{row['name']}"
                 if row['email']:
-                    button_label += f" | {row['email']}"
-                if row['experience']:
-                    button_label += f" | {row['experience']}"
+                    button_label += f" | {row['email'][:20]}"
                 
                 if st.button(button_label, key=row["id"], use_container_width=True):
                     st.session_state.selected_id = row["id"]
             
             with col2:
+                # Show match percentage badge
+                if st.session_state.jd_text:
+                    match = row['match_percentage']
+                    if match >= 70:
+                        st.success(f"✅ {match}%")
+                    elif match >= 50:
+                        st.warning(f"⚠️ {match}%")
+                    else:
+                        st.error(f"❌ {match}%")
+                else:
+                    st.text("")
+            
+            with col3:
                 if delete_mode:
-                    if st.button("❌", key="del" + row["id"]):
+                    if st.button("🗑️", key="del" + row["id"]):
                         try:
                             c.execute("DELETE FROM candidates WHERE id=?", (row["id"],))
                             conn.commit()
                             
-                            # Clear selection if deleted candidate was selected
                             if st.session_state.selected_id == row["id"]:
                                 st.session_state.selected_id = None
                             
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error deleting candidate: {str(e)}")
+                            st.error(f"Error deleting: {str(e)}")
 
 # ===== RIGHT PANEL =====
 
@@ -222,6 +335,17 @@ with right:
             data = selected.iloc[0]
             
             st.subheader("📋 Candidate Details")
+            
+            # Show match percentage prominently if JD exists
+            if st.session_state.jd_text:
+                match = data['match_percentage']
+                if match >= 70:
+                    st.success(f"🎯 JD Match Score: {match}% - Strong Match!")
+                elif match >= 50:
+                    st.warning(f"🎯 JD Match Score: {match}% - Moderate Match")
+                else:
+                    st.error(f"🎯 JD Match Score: {match}% - Weak Match")
+                st.divider()
             
             col1, col2 = st.columns(2)
             
@@ -236,15 +360,37 @@ with right:
             
             st.divider()
             
-            st.subheader("📄 Resume Preview")
+            # Tabs for better organization
+            tab1, tab2 = st.tabs(["📄 Resume Preview", "🎯 Skills Breakdown"])
             
-            st.text_area(
-                "Full Resume Content",
-                value=data["content"],
-                height=500,
-                disabled=True
-            )
+            with tab1:
+                st.text_area(
+                    "Full Resume Content",
+                    value=data["content"],
+                    height=500,
+                    disabled=True
+                )
+            
+            with tab2:
+                st.write("**Detected Skills:**")
+                skills_list = data["skills"].split(", ")
+                
+                # Create skill badges
+                cols = st.columns(3)
+                for idx, skill in enumerate(skills_list):
+                    with cols[idx % 3]:
+                        st.info(f"🔹 {skill}")
         else:
-            st.info("Selected candidate not found. They may have been deleted.")
+            st.info("Selected candidate not found.")
     else:
         st.info("👈 Select a candidate from the list to view details")
+        
+        if st.session_state.jd_text:
+            st.divider()
+            st.subheader("📋 Current Job Description")
+            st.text_area(
+                "JD Preview",
+                value=st.session_state.jd_text,
+                height=300,
+                disabled=True
+            )
