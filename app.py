@@ -1,14 +1,15 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
+import sqlite3
 import os
-import base64
 
-# =========================
+st.set_page_config(layout="wide")
+
+# =============================
 # DATABASE
-# =========================
+# =============================
 
-conn = sqlite3.connect("ats.db", check_same_thread=False)
+conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
@@ -22,142 +23,102 @@ file_path TEXT
 )
 """)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS jobs(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-title TEXT,
-description TEXT
-)
-""")
-
 conn.commit()
 
-# =========================
-# PAGE CONFIG
-# =========================
+UPLOAD_FOLDER = "resumes"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-st.set_page_config(layout="wide")
+# =============================
+# SIDEBAR FILTER
+# =============================
 
-st.title("🔥 ATS PRO Recruiter Dashboard")
+st.sidebar.title("🔎 Filters")
 
-# =========================
-# SIDEBAR FILTERS
-# =========================
-
-st.sidebar.header("🔎 Filters")
-
-name_filter = st.sidebar.text_input("Candidate Name")
-email_filter = st.sidebar.text_input("Email")
-boolean_filter = st.sidebar.text_input("Boolean Skill Search")
+filter_name = st.sidebar.text_input("Candidate Name")
+filter_email = st.sidebar.text_input("Email")
+filter_skill = st.sidebar.text_input("Boolean Skill Search")
 
 delete_mode = st.sidebar.checkbox("Enable Delete Mode")
 
-# =========================
-# UPLOAD RESUME
-# =========================
+# =============================
+# FILE UPLOAD SECTION
+# =============================
+
+st.title("🔥 ATS PRO Recruiter Dashboard")
 
 st.subheader("Upload Resume")
 
-upload = st.file_uploader("Upload Resume", type=["pdf","docx"], key="resume")
+uploaded_file = st.file_uploader("", type=["pdf","docx"])
 
-if upload:
+if uploaded_file:
 
-    save_path = os.path.join("uploads", upload.name)
+    file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
 
-    os.makedirs("uploads", exist_ok=True)
+    with open(file_path,"wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-    with open(save_path,"wb") as f:
-        f.write(upload.read())
-
-    # Dummy parsing (replace later AI parsing)
-    name = upload.name.split(".")[0]
+    # Fake parser (replace later with AI)
+    name = uploaded_file.name.replace(".pdf","").replace(".docx","")
+    email = "demo@email.com"
+    phone = "9999999999"
+    skills = "python, sql, azure"
 
     cursor.execute("""
     INSERT INTO candidates(name,email,phone,skills,file_path)
     VALUES(?,?,?,?,?)
-    """,(name,"demo@email.com","0000000000","python, sql",save_path))
+    """,(name,email,phone,skills,file_path))
 
     conn.commit()
 
     st.success("Uploaded & Saved")
 
-
-# =========================
-# JOB DESCRIPTION UPLOAD
-# =========================
-
+# JD Upload Always Visible
 st.subheader("Upload JD")
 
-jd = st.file_uploader("Upload Job Description", key="jd")
+jd_file = st.file_uploader("", key="jd_upload")
 
-if jd:
-
-    jd_text = jd.read().decode(errors="ignore")
-
-    cursor.execute("INSERT INTO jobs(title,description) VALUES (?,?)",
-                   ("JD Upload", jd_text))
-
-    conn.commit()
-
-    st.success("JD Saved")
-
-
-# =========================
+# =============================
 # LOAD DATA
-# =========================
+# =============================
 
-df = pd.read_sql_query("SELECT * FROM candidates", conn)
+df = pd.read_sql("SELECT * FROM candidates", conn)
 
-# =========================
-# FILTER LOGIC
-# =========================
+# FILTERS
+if filter_name:
+    df = df[df["name"].str.contains(filter_name, case=False)]
 
-filtered = df.copy()
+if filter_email:
+    df = df[df["email"].str.contains(filter_email, case=False)]
 
-if name_filter:
-    filtered = filtered[filtered["name"].str.contains(name_filter, case=False)]
+if filter_skill:
+    df = df[df["skills"].str.contains(filter_skill, case=False)]
 
-if email_filter:
-    filtered = filtered[filtered["email"].str.contains(email_filter, case=False)]
+# =============================
+# MAIN UI (ATS STYLE)
+# =============================
 
-if boolean_filter:
+left, right = st.columns([2,3])
 
-    # simple AND boolean logic
-    words = boolean_filter.split()
-
-    for w in words:
-        filtered = filtered[filtered["skills"].str.contains(w, case=False)]
-
-# =========================
-# LAYOUT
-# =========================
-
-col1, col2 = st.columns([2,3])
-
-# LEFT = Candidate list
-with col1:
+with left:
 
     st.subheader("Candidates")
 
-    for index,row in filtered.iterrows():
+    for index,row in df.iterrows():
 
-        c1,c2 = st.columns([4,1])
+        c1,c2 = st.columns([6,1])
 
         with c1:
-
-            if st.button(row["name"], key=f"name_{row['id']}"):
+            if st.button(row["name"], key=f"candidate_{row['id']}"):
                 st.session_state["selected_resume"] = row["file_path"]
 
         with c2:
-
             if delete_mode:
                 if st.button("❌", key=f"delete_{row['id']}"):
                     cursor.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
                     conn.commit()
                     st.rerun()
 
-# RIGHT = Resume Viewer
-with col2:
+with right:
 
     st.subheader("Resume Viewer")
 
@@ -165,17 +126,15 @@ with col2:
 
         file_path = st.session_state["selected_resume"]
 
-        if os.path.exists(file_path):
+        if file_path.endswith(".pdf"):
 
             with open(file_path,"rb") as f:
-                base64_pdf = base64.b64encode(f.read()).decode()
+                pdf = f.read()
 
-            pdf_display = f'''
-            <iframe src="data:application/pdf;base64,{base64_pdf}"
-            width="100%" height="700"></iframe>
-            '''
-
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            st.download_button("Open Resume", pdf)
 
         else:
-            st.info("Resume not found")
+            st.info("DOCX preview coming soon")
+
+    else:
+        st.info("Click candidate to view resume")
