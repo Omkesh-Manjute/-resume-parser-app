@@ -1,42 +1,33 @@
 import streamlit as st
-import sqlite3
-import re
-import docx2txt
-import pdfplumber
-import os
 import pandas as pd
+import sqlite3
+import pdfplumber
+from docx import Document
+import uuid
 
 st.set_page_config(layout="wide")
 
-DB="ats.db"
-
 # ================= DATABASE =================
 
-conn=sqlite3.connect(DB,check_same_thread=False)
+conn = sqlite3.connect("database.db",check_same_thread=False)
 c=conn.cursor()
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS candidates(
-id INTEGER PRIMARY KEY AUTOINCREMENT,
+id TEXT,
 name TEXT,
 email TEXT,
 phone TEXT,
 skills TEXT,
-experience TEXT,
-location TEXT,
-file_path TEXT UNIQUE,
 content TEXT
 )
 """)
 
 conn.commit()
 
-# ================= PARSER =================
+# ================= FUNCTIONS =================
 
 def extract_text(file):
-
-    if file.name.endswith(".docx"):
-        return docx2txt.process(file)
 
     if file.name.endswith(".pdf"):
         text=""
@@ -45,119 +36,146 @@ def extract_text(file):
                 text+=page.extract_text() or ""
         return text
 
+    if file.name.endswith(".docx"):
+        doc=Document(file)
+        return "\n".join([p.text for p in doc.paragraphs])
+
     return ""
 
-def extract_email(text):
-    match=re.search(r'\S+@\S+',text)
-    return match.group() if match else ""
+def parse_resume(text):
 
-def extract_phone(text):
-    match=re.search(r'(\+?\d[\d\s\-]{8,})',text)
-    return match.group() if match else ""
+    # basic demo parsing (can upgrade later)
+    email="demo@email.com"
+    phone="9999999999"
 
-def extract_name(text):
-    lines=text.split("\n")
-    for l in lines[:5]:
-        if len(l.strip())>3:
-            return l.strip()
-    return "Unknown"
+    name=text.split("\n")[0] if text else "Unknown"
+
+    skills="python, sql, azure"
+
+    return name,email,phone,skills
+
+# ================= SESSION =================
+
+if "selected_id" not in st.session_state:
+    st.session_state.selected_id=None
 
 # ================= SIDEBAR FILTER =================
 
 st.sidebar.title("🔎 Filters")
 
-filter_name=st.sidebar.text_input("Candidate Name")
-filter_email=st.sidebar.text_input("Email")
-filter_skill=st.sidebar.text_input("Boolean Skill")
+name_filter=st.sidebar.text_input("Candidate Name")
+
+email_filter=st.sidebar.text_input("Email")
+
+boolean_filter=st.sidebar.text_input("Boolean Skill Search")
 
 delete_mode=st.sidebar.checkbox("Enable Delete Mode")
 
-# ================= UPLOAD =================
+# ================= UPLOAD AREA =================
 
-st.title("🔥 ATS PRO RECRUITER DASHBOARD")
+st.title("🔥 ATS MONSTER RECRUITER MODE")
 
-uploaded=st.file_uploader("Upload Resume",accept_multiple_files=True,type=["pdf","docx"])
+col_upload,col_jd=st.columns(2)
 
-if uploaded:
+with col_upload:
 
-    for file in uploaded:
+    st.subheader("Upload Resume")
 
-        content=extract_text(file)
+    file=st.file_uploader("",type=["pdf","docx"])
 
-        name=extract_name(content)
-        email=extract_email(content)
-        phone=extract_phone(content)
+    if file:
 
-        skills=",".join(set(re.findall(r'\b(python|sql|azure|aws|java|etl|data)\b',content.lower())))
+        text=extract_text(file)
 
-        try:
-            c.execute("""
-            INSERT INTO candidates(name,email,phone,skills,experience,location,file_path,content)
-            VALUES(?,?,?,?,?,?,?,?)
-            """,(name,email,phone,skills,"","",file.name,content))
-            conn.commit()
-        except:
-            pass
+        name,email,phone,skills=parse_resume(text)
 
-    st.success("Saved to ATS Database")
+        uid=str(uuid.uuid4())
 
-# ================= FETCH DATA =================
+        c.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?)",
+                  (uid,name,email,phone,skills,text))
+
+        conn.commit()
+
+        st.success("Uploaded & Saved")
+
+with col_jd:
+
+    st.subheader("Upload JD (future matching)")
+    st.file_uploader("",key="jd")
+
+# ================= LOAD DATA =================
 
 df=pd.read_sql("SELECT * FROM candidates",conn)
 
-if filter_name:
-    df=df[df["name"].str.contains(filter_name,case=False)]
+# ================= FILTER LOGIC =================
 
-if filter_email:
-    df=df[df["email"].str.contains(filter_email,case=False)]
+if name_filter:
+    df=df[df["name"].str.contains(name_filter,case=False)]
 
-if filter_skill:
-    df=df[df["skills"].str.contains(filter_skill,case=False)]
+if email_filter:
+    df=df[df["email"].str.contains(email_filter,case=False)]
 
-# ================= UI LAYOUT =================
+if boolean_filter:
+    df=df[df["skills"].str.contains(boolean_filter,case=False)]
 
-col1,col2=st.columns([1,2])
+# ================= MAIN UI =================
 
-selected_id=None
+left,right=st.columns([1.3,2])
 
-with col1:
+# ===== LEFT TABLE (MONSTER STYLE) =====
+
+with left:
 
     st.subheader("Candidates")
 
-    for _,row in df.iterrows():
+    if df.empty:
+        st.info("No candidates")
+    else:
 
-        with st.container():
+        for i,row in df.iterrows():
 
-            cols=st.columns([4,1])
+            c1,c2=st.columns([6,1])
 
-            if cols[0].button(
-                f"👉 {row['name']} | {row['email']} | {row['phone']}",
-                key=f"cand_{row['id']}"):
-                selected_id=row["id"]
+            with c1:
 
-            if delete_mode:
-                if cols[1].button("❌",key=f"del_{row['id']}"):
-                    c.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
-                    conn.commit()
-                    st.rerun()
+                if st.button(
+                    f"👉 {row['name']} | {row['email']} | {row['phone']}",
+                    key=row["id"]
+                ):
+                    st.session_state.selected_id=row["id"]
 
-# ================= RIGHT PANEL =================
+            with c2:
 
-with col2:
+                if delete_mode:
+                    if st.button("❌",key="del"+row["id"]):
 
-    if selected_id:
+                        c.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
+                        conn.commit()
+                        st.rerun()
 
-        data=df[df["id"]==selected_id].iloc[0]
+# ===== RIGHT PANEL =====
 
-        st.subheader("Candidate Details")
+with right:
 
-        st.write("Name:",data["name"])
-        st.write("Email:",data["email"])
-        st.write("Phone:",data["phone"])
-        st.write("Skills:",data["skills"])
+    if st.session_state.selected_id:
 
-        st.divider()
+        selected=df[df["id"]==st.session_state.selected_id]
 
-        st.subheader("Resume Preview")
+        if not selected.empty:
 
-        st.text_area("Full Resume",data["content"],height=600)
+            data=selected.iloc[0]
+
+            st.subheader("Candidate Details")
+
+            st.write("Name:",data["name"])
+            st.write("Email:",data["email"])
+            st.write("Phone:",data["phone"])
+            st.write("Skills:",data["skills"])
+
+            st.divider()
+
+            st.subheader("Resume Preview")
+
+            st.text_area("Full Resume",
+                         data["content"],
+                         height=600)
