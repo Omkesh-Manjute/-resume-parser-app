@@ -4,70 +4,66 @@ import re
 import docx
 import pdfplumber
 
-st.title("🔥 ULTRA Recruiter AI Dashboard")
+st.set_page_config(layout="wide")
 
-uploaded_files = st.file_uploader(
-    "Upload resumes",
-    accept_multiple_files=True,
-    type=["pdf","docx"]
-)
+st.title("🔥 Ultra Recruiter ATS Dashboard")
 
-# -----------------------------
-# Extract text
-# -----------------------------
+# --------------------------
+# TEXT EXTRACTION
+# --------------------------
 
-def extract_text_docx(file):
+def extract_docx(file):
     doc = docx.Document(file)
     return "\n".join([p.text for p in doc.paragraphs])
 
-def extract_text_pdf(file):
+def extract_pdf(file):
     text=""
     with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
-            text += page.extract_text() or ""
+            text+=page.extract_text() or ""
     return text
 
-# -----------------------------
-# Resume parsing
-# -----------------------------
+# --------------------------
+# SKILLS LIST
+# --------------------------
 
-skills_keywords = [
+skills_keywords=[
     "python","java","sql","aws","react","node","azure",
-    "testing","qa","developer","data engineer"
+    "qa","testing","data engineer"
 ]
 
-def extract_info(text):
+# --------------------------
+# PARSE RESUME
+# --------------------------
 
-    email = re.findall(r'\S+@\S+', text)
-    phone = re.findall(r'\+?\d[\d -]{8,12}\d', text)
+def parse_resume(text,file):
 
-    name = text.split("\n")[0]
+    email=re.findall(r'\S+@\S+',text)
+    phone=re.findall(r'\+?\d[\d -]{8,12}\d',text)
 
-    skills = [s for s in skills_keywords if s in text.lower()]
+    skills=[s for s in skills_keywords if s in text.lower()]
 
-    exp = re.findall(r'(\d+)\s+years', text.lower())
+    name=text.split("\n")[0]
 
-    return {
-        "Name": name,
-        "Email": email[0] if email else "",
-        "Phone": phone[0] if phone else "",
-        "Skills": ", ".join(skills),
-        "Experience": exp[0] if exp else "",
-        "FullText": text.lower()
+    return{
+        "Name":name,
+        "Email":email[0] if email else "",
+        "Phone":phone[0] if phone else "",
+        "Skills":", ".join(skills),
+        "FullText":text.lower(),
+        "Resume":file
     }
 
-# -----------------------------
-# BOOLEAN SEARCH
-# -----------------------------
+# --------------------------
+# BOOLEAN FILTER
+# --------------------------
 
-def boolean_filter(df, query):
+def boolean_search(df,query):
 
     if not query:
         return df
 
-    query = query.lower()
-
-    filtered=[]
+    result=[]
 
     for _,row in df.iterrows():
 
@@ -76,117 +72,105 @@ def boolean_filter(df, query):
         if " and " in query:
             terms=query.split(" and ")
             if all(t in text for t in terms):
-                filtered.append(row)
+                result.append(row)
 
         elif " or " in query:
             terms=query.split(" or ")
             if any(t in text for t in terms):
-                filtered.append(row)
-
-        elif " not " in query:
-            term=query.replace(" not ","")
-            if term not in text:
-                filtered.append(row)
+                result.append(row)
 
         else:
             if query in text:
-                filtered.append(row)
+                result.append(row)
 
-    return pd.DataFrame(filtered)
+    return pd.DataFrame(result)
 
-# -----------------------------
-# JD MATCH SCORE
-# -----------------------------
+# --------------------------
+# UPLOAD FILES
+# --------------------------
 
-def match_score(resume_text, jd):
+files=st.file_uploader(
+    "Upload resumes",
+    accept_multiple_files=True,
+    type=["pdf","docx"]
+)
 
-    jd_words = jd.lower().split()
+if files:
 
-    score=0
+    data=[]
 
-    for word in jd_words:
-        if word in resume_text:
-            score+=1
-
-    return score
-
-# -----------------------------
-# MAIN
-# -----------------------------
-
-data=[]
-
-if uploaded_files:
-
-    for file in uploaded_files:
+    for file in files:
 
         if file.name.endswith("docx"):
-            text = extract_text_docx(file)
-
-        elif file.name.endswith("pdf"):
-            text = extract_text_pdf(file)
-
+            text=extract_docx(file)
         else:
-            continue
+            text=extract_pdf(file)
 
-        info=extract_info(text)
-        info["File"]=file.name
-        data.append(info)
+        data.append(parse_resume(text,file))
 
     df=pd.DataFrame(data)
 
-    # -----------------------------
-    # JD Input
-    # -----------------------------
+    # --------------------------
+    # FILTER PANEL
+    # --------------------------
 
-    st.subheader("📄 Paste Job Description")
+    st.subheader("🔎 Recruiter Filters")
 
-    jd_text = st.text_area("Paste JD here for AI matching")
+    col1,col2,col3=st.columns(3)
 
-    if jd_text:
-
-        df["MatchScore"]=df["FullText"].apply(lambda x: match_score(x,jd_text))
-
-        df=df.sort_values(by="MatchScore",ascending=False)
-
-    # -----------------------------
-    # ADVANCED FILTER
-    # -----------------------------
-
-    st.subheader("🔎 Recruiter Search")
-
-    search_query = st.text_input(
-        "Boolean search (python AND aws OR java)"
+    name_filter=col1.text_input("Search Name")
+    email_filter=col2.text_input("Search Email")
+    boolean_filter_input=col3.text_input(
+        "Boolean Search (python AND aws)"
     )
 
-    filtered_df=boolean_filter(df,search_query)
+    filtered=df.copy()
 
-    # -----------------------------
-    # SHORTLIST FILTER
-    # -----------------------------
+    if name_filter:
+        filtered=filtered[
+            filtered["Name"].str.contains(name_filter,case=False)
+        ]
 
-    min_score=st.slider("Minimum Match Score",0,50,0)
+    if email_filter:
+        filtered=filtered[
+            filtered["Email"].str.contains(email_filter,case=False)
+        ]
 
-    if "MatchScore" in filtered_df.columns:
-        filtered_df=filtered_df[filtered_df["MatchScore"]>=min_score]
+    filtered=boolean_search(filtered,boolean_filter_input.lower())
 
-    # -----------------------------
-    # TABLE
-    # -----------------------------
+    # --------------------------
+    # ATS STYLE TABLE
+    # --------------------------
 
-    st.subheader("📊 Candidate Ranking")
+    st.subheader("📋 Candidate List")
 
-    st.dataframe(filtered_df.drop(columns=["FullText"]))
+    for i,row in filtered.iterrows():
 
-    # -----------------------------
-    # DOWNLOAD EXCEL
-    # -----------------------------
+        with st.container():
 
-    csv=filtered_df.to_csv(index=False).encode("utf-8")
+            colA,colB,colC=st.columns([3,3,4])
 
-    st.download_button(
-        "⬇️ Download Shortlist",
-        csv,
-        "shortlist.csv",
-        "text/csv"
-    )
+            # CLICKABLE NAME
+            with colA:
+                st.markdown(
+                    f"### 🔹 {row['Name']}"
+                )
+
+                st.download_button(
+                    "Open Resume",
+                    row["Resume"],
+                    file_name=row["Resume"].name
+                )
+
+            with colB:
+                st.write("📧",row["Email"])
+                st.write("📞",row["Phone"])
+
+            with colC:
+                st.write("💻 Skills:",row["Skills"])
+
+            # EXPANDABLE DETAILS
+            with st.expander("More Details"):
+                st.write("Full Resume Text Preview:")
+                st.write(row["FullText"][:500])
+
