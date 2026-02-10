@@ -4,7 +4,7 @@ import re
 import docx
 import pdfplumber
 
-st.title("🔥 AI Resume Parser Dashboard")
+st.title("🔥 ULTRA Recruiter AI Dashboard")
 
 uploaded_files = st.file_uploader(
     "Upload resumes",
@@ -12,10 +12,8 @@ uploaded_files = st.file_uploader(
     type=["pdf","docx"]
 )
 
-data = []
-
 # -----------------------------
-# Extract text functions
+# Extract text
 # -----------------------------
 
 def extract_text_docx(file):
@@ -33,6 +31,11 @@ def extract_text_pdf(file):
 # Resume parsing
 # -----------------------------
 
+skills_keywords = [
+    "python","java","sql","aws","react","node","azure",
+    "testing","qa","developer","data engineer"
+]
+
 def extract_info(text):
 
     email = re.findall(r'\S+@\S+', text)
@@ -40,8 +43,7 @@ def extract_info(text):
 
     name = text.split("\n")[0]
 
-    skills_keywords = ["python","java","sql","react","aws","testing","qa","developer"]
-    skills = [s for s in skills_keywords if s.lower() in text.lower()]
+    skills = [s for s in skills_keywords if s in text.lower()]
 
     exp = re.findall(r'(\d+)\s+years', text.lower())
 
@@ -50,11 +52,12 @@ def extract_info(text):
         "Email": email[0] if email else "",
         "Phone": phone[0] if phone else "",
         "Skills": ", ".join(skills),
-        "Experience": exp[0] if exp else ""
+        "Experience": exp[0] if exp else "",
+        "FullText": text.lower()
     }
 
 # -----------------------------
-# BOOLEAN SEARCH FUNCTION
+# BOOLEAN SEARCH
 # -----------------------------
 
 def boolean_filter(df, query):
@@ -64,27 +67,24 @@ def boolean_filter(df, query):
 
     query = query.lower()
 
-    filtered = []
+    filtered=[]
 
-    for _, row in df.iterrows():
+    for _,row in df.iterrows():
 
-        text = " ".join(row.astype(str)).lower()
+        text=" ".join(row.astype(str)).lower()
 
-        # AND logic
         if " and " in query:
-            terms = query.split(" and ")
+            terms=query.split(" and ")
             if all(t in text for t in terms):
                 filtered.append(row)
 
-        # OR logic
         elif " or " in query:
-            terms = query.split(" or ")
+            terms=query.split(" or ")
             if any(t in text for t in terms):
                 filtered.append(row)
 
-        # NOT logic
         elif " not " in query:
-            term = query.replace(" not ","")
+            term=query.replace(" not ","")
             if term not in text:
                 filtered.append(row)
 
@@ -94,10 +94,27 @@ def boolean_filter(df, query):
 
     return pd.DataFrame(filtered)
 
+# -----------------------------
+# JD MATCH SCORE
+# -----------------------------
+
+def match_score(resume_text, jd):
+
+    jd_words = jd.lower().split()
+
+    score=0
+
+    for word in jd_words:
+        if word in resume_text:
+            score+=1
+
+    return score
 
 # -----------------------------
 # MAIN
 # -----------------------------
+
+data=[]
 
 if uploaded_files:
 
@@ -112,23 +129,64 @@ if uploaded_files:
         else:
             continue
 
-        info = extract_info(text)
-        info["File"] = file.name
-
+        info=extract_info(text)
+        info["File"]=file.name
         data.append(info)
 
-    df = pd.DataFrame(data)
+    df=pd.DataFrame(data)
 
-    # 🔥 FILTER TOP (as you wanted)
-    st.subheader("🔎 Advanced Search")
+    # -----------------------------
+    # JD Input
+    # -----------------------------
+
+    st.subheader("📄 Paste Job Description")
+
+    jd_text = st.text_area("Paste JD here for AI matching")
+
+    if jd_text:
+
+        df["MatchScore"]=df["FullText"].apply(lambda x: match_score(x,jd_text))
+
+        df=df.sort_values(by="MatchScore",ascending=False)
+
+    # -----------------------------
+    # ADVANCED FILTER
+    # -----------------------------
+
+    st.subheader("🔎 Recruiter Search")
 
     search_query = st.text_input(
-        "Search (Name / Email / Skills / Boolean search)",
-        placeholder="Example: python AND aws OR java NOT testing"
+        "Boolean search (python AND aws OR java)"
     )
 
-    filtered_df = boolean_filter(df, search_query)
+    filtered_df=boolean_filter(df,search_query)
 
+    # -----------------------------
+    # SHORTLIST FILTER
+    # -----------------------------
+
+    min_score=st.slider("Minimum Match Score",0,50,0)
+
+    if "MatchScore" in filtered_df.columns:
+        filtered_df=filtered_df[filtered_df["MatchScore"]>=min_score]
+
+    # -----------------------------
     # TABLE
-    st.subheader("📊 Candidate Table")
-    st.dataframe(filtered_df)
+    # -----------------------------
+
+    st.subheader("📊 Candidate Ranking")
+
+    st.dataframe(filtered_df.drop(columns=["FullText"]))
+
+    # -----------------------------
+    # DOWNLOAD EXCEL
+    # -----------------------------
+
+    csv=filtered_df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "⬇️ Download Shortlist",
+        csv,
+        "shortlist.csv",
+        "text/csv"
+    )
