@@ -5,6 +5,7 @@ import re
 import pdfplumber
 from docx import Document
 import uuid
+from io import BytesIO
 
 st.set_page_config(layout="wide")
 
@@ -92,6 +93,15 @@ st.markdown("""
         font-size: 24px;
         font-weight: bold;
         text-align: center;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    /* Export Section */
+    .export-section {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        padding: 20px;
+        border-radius: 10px;
+        margin: 20px 0;
         box-shadow: 0 5px 15px rgba(0,0,0,0.2);
     }
     
@@ -269,6 +279,49 @@ def format_resume_text(text):
     
     return '\n\n'.join(formatted_lines)
 
+# ================= EXPORT FUNCTIONS =================
+
+def convert_df_to_excel(df_export):
+    """Convert dataframe to Excel file"""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_export.to_excel(writer, index=False, sheet_name='Candidates')
+        
+        # Get workbook and worksheet
+        workbook = writer.book
+        worksheet = writer.sheets['Candidates']
+        
+        # Add formatting
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#667eea',
+            'font_color': 'white',
+            'border': 1
+        })
+        
+        # Write headers with formatting
+        for col_num, value in enumerate(df_export.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+        
+        # Auto-adjust column width
+        for i, col in enumerate(df_export.columns):
+            max_len = max(
+                df_export[col].astype(str).apply(len).max(),
+                len(col)
+            ) + 2
+            worksheet.set_column(i, i, min(max_len, 50))
+    
+    output.seek(0)
+    return output
+
+def prepare_export_data(df):
+    """Prepare data for export"""
+    export_df = df[['name', 'email', 'phone', 'experience', 'skills', 'match_percentage']].copy()
+    export_df.columns = ['Name', 'Email', 'Phone', 'Experience', 'Skills', 'Match %']
+    return export_df
+
 # ================= SESSION STATE =================
 
 if "selected_id" not in st.session_state:
@@ -409,6 +462,46 @@ if not df.empty:
     
     if min_match > 0:
         df = df[df["match_percentage"] >= min_match]
+
+# ================= EXPORT SECTION =================
+
+if not df.empty:
+    st.markdown('<div class="export-section">', unsafe_allow_html=True)
+    st.markdown("<h3 style='color:white; margin:0;'>📥 Export Filtered Candidates</h3>", unsafe_allow_html=True)
+    st.markdown(f"<p style='color:white; margin:10px 0;'>Total candidates to export: <strong>{len(df)}</strong></p>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 1, 2])
+    
+    with col1:
+        # Excel Export
+        export_df = prepare_export_data(df)
+        excel_data = convert_df_to_excel(export_df)
+        
+        st.download_button(
+            label="📊 Download Excel",
+            data=excel_data,
+            file_name="filtered_candidates.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary"
+        )
+    
+    with col2:
+        # CSV Export
+        csv_data = export_df.to_csv(index=False).encode('utf-8')
+        
+        st.download_button(
+            label="📄 Download CSV",
+            data=csv_data,
+            file_name="filtered_candidates.csv",
+            mime="text/csv",
+            use_container_width=True,
+            type="primary"
+        )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.divider()
 
 # ================= DISPLAY =================
 
