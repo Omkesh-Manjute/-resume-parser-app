@@ -282,36 +282,16 @@ def format_resume_text(text):
 # ================= EXPORT FUNCTIONS =================
 
 def convert_df_to_excel(df_export):
-    """Convert dataframe to Excel file"""
+    """Convert dataframe to Excel file using openpyxl"""
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_export.to_excel(writer, index=False, sheet_name='Candidates')
-        
-        # Get workbook and worksheet
-        workbook = writer.book
-        worksheet = writer.sheets['Candidates']
-        
-        # Add formatting
-        header_format = workbook.add_format({
-            'bold': True,
-            'text_wrap': True,
-            'valign': 'top',
-            'fg_color': '#667eea',
-            'font_color': 'white',
-            'border': 1
-        })
-        
-        # Write headers with formatting
-        for col_num, value in enumerate(df_export.columns.values):
-            worksheet.write(0, col_num, value, header_format)
-        
-        # Auto-adjust column width
-        for i, col in enumerate(df_export.columns):
-            max_len = max(
-                df_export[col].astype(str).apply(len).max(),
-                len(col)
-            ) + 2
-            worksheet.set_column(i, i, min(max_len, 50))
+    
+    try:
+        # Try using openpyxl engine
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_export.to_excel(writer, index=False, sheet_name='Candidates')
+    except:
+        # Fallback to basic Excel export without formatting
+        df_export.to_excel(output, index=False, sheet_name='Candidates')
     
     output.seek(0)
     return output
