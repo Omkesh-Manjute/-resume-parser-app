@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
+import docx2txt
 
 st.set_page_config(layout="wide")
 
-# =============================
+# =====================
 # DATABASE
-# =============================
+# =====================
 
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -25,116 +26,134 @@ file_path TEXT
 
 conn.commit()
 
-UPLOAD_FOLDER = "resumes"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+UPLOAD_FOLDER="resumes"
+os.makedirs(UPLOAD_FOLDER,exist_ok=True)
 
-# =============================
+# =====================
 # SIDEBAR FILTER
-# =============================
+# =====================
 
 st.sidebar.title("🔎 Filters")
 
-filter_name = st.sidebar.text_input("Candidate Name")
-filter_email = st.sidebar.text_input("Email")
-filter_skill = st.sidebar.text_input("Boolean Skill Search")
+filter_name=st.sidebar.text_input("Candidate Name")
+filter_email=st.sidebar.text_input("Email")
+filter_skill=st.sidebar.text_input("Skills Boolean")
 
-delete_mode = st.sidebar.checkbox("Enable Delete Mode")
+delete_mode=st.sidebar.checkbox("Enable Delete Mode")
 
-# =============================
-# FILE UPLOAD SECTION
-# =============================
+# =====================
+# UPLOAD SECTION
+# =====================
 
 st.title("🔥 ATS PRO Recruiter Dashboard")
 
-st.subheader("Upload Resume")
-
-uploaded_file = st.file_uploader("", type=["pdf","docx"])
+uploaded_file=st.file_uploader("Upload Resume",type=["pdf","docx"])
 
 if uploaded_file:
 
-    file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+    file_path=os.path.join(UPLOAD_FOLDER,uploaded_file.name)
 
-    with open(file_path,"wb") as f:
-        f.write(uploaded_file.getbuffer())
+    # prevent duplicate insert
+    cursor.execute("SELECT * FROM candidates WHERE file_path=?",(file_path,))
+    exist=cursor.fetchone()
 
-    # Fake parser (replace later with AI)
-    name = uploaded_file.name.replace(".pdf","").replace(".docx","")
-    email = "demo@email.com"
-    phone = "9999999999"
-    skills = "python, sql, azure"
+    if not exist:
 
-    cursor.execute("""
-    INSERT INTO candidates(name,email,phone,skills,file_path)
-    VALUES(?,?,?,?,?)
-    """,(name,email,phone,skills,file_path))
+        with open(file_path,"wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-    conn.commit()
+        name=uploaded_file.name.replace(".pdf","").replace(".docx","")
+        email="demo@email.com"
+        phone="9999999999"
+        skills="python, sql, azure"
 
-    st.success("Uploaded & Saved")
+        cursor.execute("""
+        INSERT INTO candidates(name,email,phone,skills,file_path)
+        VALUES(?,?,?,?,?)
+        """,(name,email,phone,skills,file_path))
 
-# JD Upload Always Visible
-st.subheader("Upload JD")
+        conn.commit()
 
-jd_file = st.file_uploader("", key="jd_upload")
+        st.success("Uploaded & Saved")
 
-# =============================
+# =====================
 # LOAD DATA
-# =============================
+# =====================
 
-df = pd.read_sql("SELECT * FROM candidates", conn)
+df=pd.read_sql("SELECT * FROM candidates",conn)
 
-# FILTERS
 if filter_name:
-    df = df[df["name"].str.contains(filter_name, case=False)]
+    df=df[df["name"].str.contains(filter_name,case=False)]
 
 if filter_email:
-    df = df[df["email"].str.contains(filter_email, case=False)]
+    df=df[df["email"].str.contains(filter_email,case=False)]
 
 if filter_skill:
-    df = df[df["skills"].str.contains(filter_skill, case=False)]
+    df=df[df["skills"].str.contains(filter_skill,case=False)]
 
-# =============================
-# MAIN UI (ATS STYLE)
-# =============================
+# =====================
+# ATS LAYOUT
+# =====================
 
-left, right = st.columns([2,3])
+left,right=st.columns([2,3])
 
 with left:
 
     st.subheader("Candidates")
 
-    for index,row in df.iterrows():
+    for _,row in df.iterrows():
 
-        c1,c2 = st.columns([6,1])
+        container=st.container()
 
-        with c1:
-            if st.button(row["name"], key=f"candidate_{row['id']}"):
-                st.session_state["selected_resume"] = row["file_path"]
+        with container:
 
-        with c2:
+            c1,c2=st.columns([6,1])
+
+            # UNIQUE KEY FIX
+            if c1.button(
+                f"{row['name']} | {row['email']} | {row['phone']}",
+                key=f"candidate_{row['id']}"
+            ):
+                st.session_state["selected_candidate"]=row.to_dict()
+
             if delete_mode:
-                if st.button("❌", key=f"delete_{row['id']}"):
+                if c2.button("❌",key=f"delete_{row['id']}"):
                     cursor.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
                     conn.commit()
                     st.rerun()
 
+# =====================
+# RIGHT PANEL
+# =====================
+
 with right:
 
-    st.subheader("Resume Viewer")
+    st.subheader("Candidate Details")
 
-    if "selected_resume" in st.session_state:
+    if "selected_candidate" in st.session_state:
 
-        file_path = st.session_state["selected_resume"]
+        data=st.session_state["selected_candidate"]
 
-        if file_path.endswith(".pdf"):
+        st.write("### Name:",data["name"])
+        st.write("Email:",data["email"])
+        st.write("Phone:",data["phone"])
+        st.write("Skills:",data["skills"])
+
+        st.divider()
+
+        st.subheader("Resume Preview")
+
+        file_path=data["file_path"]
+
+        if file_path.endswith(".docx"):
+
+            text=docx2txt.process(file_path)
+            st.text(text[:2000])
+
+        elif file_path.endswith(".pdf"):
 
             with open(file_path,"rb") as f:
-                pdf = f.read()
-
-            st.download_button("Open Resume", pdf)
-
-        else:
-            st.info("DOCX preview coming soon")
+                st.download_button("Open PDF",f,"resume.pdf")
 
     else:
-        st.info("Click candidate to view resume")
+        st.info("Select candidate from left panel")
