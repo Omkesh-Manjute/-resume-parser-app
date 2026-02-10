@@ -8,6 +8,123 @@ import uuid
 
 st.set_page_config(layout="wide")
 
+# ================= CUSTOM CSS =================
+
+st.markdown("""
+<style>
+    /* Resume Preview Styling */
+    .resume-container {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 30px;
+        border-radius: 15px;
+        margin: 20px 0;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    }
+    
+    .resume-text {
+        background: white;
+        padding: 40px;
+        border-radius: 10px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 16px;
+        line-height: 1.8;
+        color: #2d3748;
+        white-space: pre-wrap;
+        max-height: 600px;
+        overflow-y: auto;
+        box-shadow: inset 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .resume-text-full {
+        background: white;
+        padding: 50px;
+        border-radius: 10px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 18px;
+        line-height: 2;
+        color: #1a202c;
+        white-space: pre-wrap;
+        max-height: 800px;
+        overflow-y: auto;
+    }
+    
+    /* Skill Badge Styling */
+    .skill-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        margin: 5px;
+        font-weight: bold;
+        font-size: 14px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }
+    
+    /* Match Score Styling */
+    .match-high {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    .match-medium {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    .match-low {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    /* Button Styling */
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    
+    /* Candidate Card */
+    .candidate-info {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 10px 0;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    
+    .info-label {
+        font-size: 14px;
+        opacity: 0.9;
+        font-weight: 500;
+    }
+    
+    .info-value {
+        font-size: 18px;
+        font-weight: bold;
+        margin-top: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ================= DATABASE =================
 
 conn = sqlite3.connect("database.db", check_same_thread=False)
@@ -134,6 +251,24 @@ def calculate_match_percentage(candidate_text, candidate_skills, jd_text):
     
     return min(match_percentage, 100)
 
+# ================= FORMAT RESUME =================
+
+def format_resume_text(text):
+    """Format resume text for better display"""
+    if not text:
+        return "No content available"
+    
+    # Split into lines and clean
+    lines = text.split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if line:
+            formatted_lines.append(line)
+    
+    return '\n\n'.join(formatted_lines)
+
 # ================= SESSION STATE =================
 
 if "selected_id" not in st.session_state:
@@ -141,6 +276,9 @@ if "selected_id" not in st.session_state:
 
 if "jd_text" not in st.session_state:
     st.session_state.jd_text = ""
+
+if "show_full_resume" not in st.session_state:
+    st.session_state.show_full_resume = False
 
 # ================= SIDEBAR =================
 
@@ -297,6 +435,7 @@ with left:
                 
                 if st.button(button_label, key=row["id"], use_container_width=True):
                     st.session_state.selected_id = row["id"]
+                    st.session_state.show_full_resume = False
             
             with col2:
                 # Show match percentage badge
@@ -334,52 +473,77 @@ with right:
         if not selected.empty:
             data = selected.iloc[0]
             
-            st.subheader("📋 Candidate Details")
+            # Candidate Details Card
+            st.markdown('<div class="candidate-info">', unsafe_allow_html=True)
+            st.markdown(f"<h2 style='margin:0; color:white;'>📋 {data['name']}</h2>", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
             
             # Show match percentage prominently if JD exists
             if st.session_state.jd_text:
                 match = data['match_percentage']
                 if match >= 70:
-                    st.success(f"🎯 JD Match Score: {match}% - Strong Match!")
+                    st.markdown(f'<div class="match-high">🎯 JD Match Score: {match}% - Strong Match! 🌟</div>', unsafe_allow_html=True)
                 elif match >= 50:
-                    st.warning(f"🎯 JD Match Score: {match}% - Moderate Match")
+                    st.markdown(f'<div class="match-medium">🎯 JD Match Score: {match}% - Moderate Match 👍</div>', unsafe_allow_html=True)
                 else:
-                    st.error(f"🎯 JD Match Score: {match}% - Weak Match")
-                st.divider()
+                    st.markdown(f'<div class="match-low">🎯 JD Match Score: {match}% - Weak Match 🤔</div>', unsafe_allow_html=True)
+                st.write("")
             
+            # Basic Info in columns
             col1, col2 = st.columns(2)
             
             with col1:
-                st.write("**Name:**", data["name"])
-                st.write("**Email:**", data["email"] if data["email"] else "Not found")
-                st.write("**Phone:**", data["phone"] if data["phone"] else "Not found")
+                st.markdown("**📧 Email:**")
+                st.info(data["email"] if data["email"] else "Not found")
+                st.markdown("**📞 Phone:**")
+                st.info(data["phone"] if data["phone"] else "Not found")
             
             with col2:
-                st.write("**Experience:**", data["experience"] if data["experience"] else "Not specified")
-                st.write("**Skills:**", data["skills"])
+                st.markdown("**💼 Experience:**")
+                st.info(data["experience"] if data["experience"] else "Not specified")
             
             st.divider()
             
-            # Tabs for better organization
-            tab1, tab2 = st.tabs(["📄 Resume Preview", "🎯 Skills Breakdown"])
+            # Skills Section
+            st.markdown("**🎯 Detected Skills:**")
+            skills_list = [s.strip() for s in data["skills"].split(", ") if s.strip()]
             
-            with tab1:
-                st.text_area(
-                    "Full Resume Content",
-                    value=data["content"],
-                    height=500,
-                    disabled=True
-                )
+            # Display skills as HTML badges
+            skills_html = "".join([f'<span class="skill-badge">{skill}</span>' for skill in skills_list])
+            st.markdown(skills_html, unsafe_allow_html=True)
             
-            with tab2:
-                st.write("**Detected Skills:**")
-                skills_list = data["skills"].split(", ")
-                
-                # Create skill badges
-                cols = st.columns(3)
-                for idx, skill in enumerate(skills_list):
-                    with cols[idx % 3]:
-                        st.info(f"🔹 {skill}")
+            st.divider()
+            
+            # Resume Preview Section
+            st.subheader("📄 Resume Preview")
+            
+            formatted_text = format_resume_text(data["content"])
+            
+            # Show preview in styled container
+            st.markdown('<div class="resume-container">', unsafe_allow_html=True)
+            st.markdown(f'<div class="resume-text">{formatted_text[:1500]}...</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Button to expand full resume
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col2:
+                if st.button("📖 View Full Resume", key="expand_resume", use_container_width=True, type="primary"):
+                    st.session_state.show_full_resume = not st.session_state.show_full_resume
+            
+            # Show full resume in expander/modal style
+            if st.session_state.show_full_resume:
+                with st.expander("📄 Full Resume - Click to Close", expanded=True):
+                    st.markdown('<div class="resume-text-full">', unsafe_allow_html=True)
+                    st.markdown(formatted_text, unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # Download button
+                    st.download_button(
+                        label="💾 Download Resume Text",
+                        data=data["content"],
+                        file_name=f"{data['name']}_resume.txt",
+                        mime="text/plain"
+                    )
         else:
             st.info("Selected candidate not found.")
     else:
@@ -388,9 +552,6 @@ with right:
         if st.session_state.jd_text:
             st.divider()
             st.subheader("📋 Current Job Description")
-            st.text_area(
-                "JD Preview",
-                value=st.session_state.jd_text,
-                height=300,
-                disabled=True
-            )
+            st.markdown('<div class="resume-container">', unsafe_allow_html=True)
+            st.markdown(f'<div class="resume-text">{st.session_state.jd_text}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
