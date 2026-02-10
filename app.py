@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import re
 import pdfplumber
 from docx import Document
 import uuid
@@ -19,95 +20,96 @@ name TEXT,
 email TEXT,
 phone TEXT,
 skills TEXT,
+experience TEXT,
 content TEXT
 )
 """)
 
 conn.commit()
 
-# ================= FUNCTIONS =================
+# ================= TEXT EXTRACTION =================
 
 def extract_text(file):
 
+    text=""
+
     if file.name.endswith(".pdf"):
-        text=""
         with pdfplumber.open(file) as pdf:
-            for page in pdf.pages:
-                text+=page.extract_text() or ""
-        return text
+            for p in pdf.pages:
+                text+=p.extract_text() or ""
 
-    if file.name.endswith(".docx"):
+    elif file.name.endswith(".docx"):
         doc=Document(file)
-        return "\n".join([p.text for p in doc.paragraphs])
+        text="\n".join([p.text for p in doc.paragraphs])
 
-    return ""
+    return text
+
+# ================= SMART PARSER =================
 
 def parse_resume(text):
 
-    # basic demo parsing (can upgrade later)
-    email="demo@email.com"
-    phone="9999999999"
+    # NAME
+    name=text.split("\n")[0][:60]
 
-    name=text.split("\n")[0] if text else "Unknown"
+    # EMAIL
+    email_match=re.findall(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}',text)
+    email=email_match[0] if email_match else ""
 
-    skills="python, sql, azure"
+    # PHONE
+    phone_match=re.findall(r'\+?\d[\d\s-]{8,}',text)
+    phone=phone_match[0] if phone_match else ""
 
-    return name,email,phone,skills
+    # EXPERIENCE
+    exp_match=re.findall(r'(\d+\+?\s?years?)',text.lower())
+    experience=exp_match[0] if exp_match else ""
+
+    # SKILLS keyword scan
+    skill_list=["python","sql","azure","aws","java","react","etl","data","spark"]
+    skills=[s for s in skill_list if s.lower() in text.lower()]
+    skills=", ".join(skills)
+
+    return name,email,phone,skills,experience
 
 # ================= SESSION =================
 
 if "selected_id" not in st.session_state:
     st.session_state.selected_id=None
 
-# ================= SIDEBAR FILTER =================
+# ================= SIDEBAR =================
 
-st.sidebar.title("🔎 Filters")
+st.sidebar.title("Filters")
 
 name_filter=st.sidebar.text_input("Candidate Name")
-
 email_filter=st.sidebar.text_input("Email")
-
-boolean_filter=st.sidebar.text_input("Boolean Skill Search")
+skill_filter=st.sidebar.text_input("Skills Boolean")
 
 delete_mode=st.sidebar.checkbox("Enable Delete Mode")
 
-# ================= UPLOAD AREA =================
+# ================= UPLOAD =================
 
-st.title("🔥 ATS MONSTER RECRUITER MODE")
+st.title("🔥 ATS MONSTER RECRUITER UI")
 
-col_upload,col_jd=st.columns(2)
+file=st.file_uploader("Upload Resume",type=["pdf","docx"])
 
-with col_upload:
+if file:
 
-    st.subheader("Upload Resume")
+    text=extract_text(file)
 
-    file=st.file_uploader("",type=["pdf","docx"])
+    name,email,phone,skills,experience=parse_resume(text)
 
-    if file:
+    uid=str(uuid.uuid4())
 
-        text=extract_text(file)
+    c.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?,?)",
+              (uid,name,email,phone,skills,experience,text))
+    conn.commit()
 
-        name,email,phone,skills=parse_resume(text)
-
-        uid=str(uuid.uuid4())
-
-        c.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?)",
-                  (uid,name,email,phone,skills,text))
-
-        conn.commit()
-
-        st.success("Uploaded & Saved")
-
-with col_jd:
-
-    st.subheader("Upload JD (future matching)")
-    st.file_uploader("",key="jd")
+    st.success("Uploaded & Saved")
 
 # ================= LOAD DATA =================
 
 df=pd.read_sql("SELECT * FROM candidates",conn)
 
-# ================= FILTER LOGIC =================
+# FILTERS
 
 if name_filter:
     df=df[df["name"].str.contains(name_filter,case=False)]
@@ -115,43 +117,36 @@ if name_filter:
 if email_filter:
     df=df[df["email"].str.contains(email_filter,case=False)]
 
-if boolean_filter:
-    df=df[df["skills"].str.contains(boolean_filter,case=False)]
+if skill_filter:
+    df=df[df["skills"].str.contains(skill_filter,case=False)]
 
-# ================= MAIN UI =================
+# ================= UI =================
 
 left,right=st.columns([1.3,2])
 
-# ===== LEFT TABLE (MONSTER STYLE) =====
+# ===== LEFT TABLE =====
 
 with left:
 
     st.subheader("Candidates")
 
-    if df.empty:
-        st.info("No candidates")
-    else:
+    for i,row in df.iterrows():
 
-        for i,row in df.iterrows():
+        col1,col2=st.columns([5,1])
 
-            c1,c2=st.columns([6,1])
+        with col1:
+            if st.button(
+                f"{row['name']} | {row['email']} | {row['experience']}",
+                key=row["id"]
+            ):
+                st.session_state.selected_id=row["id"]
 
-            with c1:
-
-                if st.button(
-                    f"👉 {row['name']} | {row['email']} | {row['phone']}",
-                    key=row["id"]
-                ):
-                    st.session_state.selected_id=row["id"]
-
-            with c2:
-
-                if delete_mode:
-                    if st.button("❌",key="del"+row["id"]):
-
-                        c.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
-                        conn.commit()
-                        st.rerun()
+        with col2:
+            if delete_mode:
+                if st.button("❌",key="del"+row["id"]):
+                    c.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
+                    conn.commit()
+                    st.rerun()
 
 # ===== RIGHT PANEL =====
 
@@ -170,12 +165,15 @@ with right:
             st.write("Name:",data["name"])
             st.write("Email:",data["email"])
             st.write("Phone:",data["phone"])
+            st.write("Experience:",data["experience"])
             st.write("Skills:",data["skills"])
 
             st.divider()
 
             st.subheader("Resume Preview")
 
-            st.text_area("Full Resume",
-                         data["content"],
-                         height=600)
+            st.text_area(
+                "Full Resume",
+                value=data["content"],
+                height=600
+            )
