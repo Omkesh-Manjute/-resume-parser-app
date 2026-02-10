@@ -14,6 +14,10 @@ uploaded_files = st.file_uploader(
 
 data = []
 
+# -----------------------------
+# Extract text functions
+# -----------------------------
+
 def extract_text_docx(file):
     doc = docx.Document(file)
     return "\n".join([p.text for p in doc.paragraphs])
@@ -24,6 +28,10 @@ def extract_text_pdf(file):
         for page in pdf.pages:
             text += page.extract_text() or ""
     return text
+
+# -----------------------------
+# Resume parsing
+# -----------------------------
 
 def extract_info(text):
 
@@ -45,6 +53,52 @@ def extract_info(text):
         "Experience": exp[0] if exp else ""
     }
 
+# -----------------------------
+# BOOLEAN SEARCH FUNCTION
+# -----------------------------
+
+def boolean_filter(df, query):
+
+    if not query:
+        return df
+
+    query = query.lower()
+
+    filtered = []
+
+    for _, row in df.iterrows():
+
+        text = " ".join(row.astype(str)).lower()
+
+        # AND logic
+        if " and " in query:
+            terms = query.split(" and ")
+            if all(t in text for t in terms):
+                filtered.append(row)
+
+        # OR logic
+        elif " or " in query:
+            terms = query.split(" or ")
+            if any(t in text for t in terms):
+                filtered.append(row)
+
+        # NOT logic
+        elif " not " in query:
+            term = query.replace(" not ","")
+            if term not in text:
+                filtered.append(row)
+
+        else:
+            if query in text:
+                filtered.append(row)
+
+    return pd.DataFrame(filtered)
+
+
+# -----------------------------
+# MAIN
+# -----------------------------
+
 if uploaded_files:
 
     for file in uploaded_files:
@@ -65,13 +119,16 @@ if uploaded_files:
 
     df = pd.DataFrame(data)
 
+    # 🔥 FILTER TOP (as you wanted)
+    st.subheader("🔎 Advanced Search")
+
+    search_query = st.text_input(
+        "Search (Name / Email / Skills / Boolean search)",
+        placeholder="Example: python AND aws OR java NOT testing"
+    )
+
+    filtered_df = boolean_filter(df, search_query)
+
+    # TABLE
     st.subheader("📊 Candidate Table")
-    st.dataframe(df)
-
-    st.subheader("🔎 Filter by Skill")
-
-    skill_filter = st.text_input("Enter skill")
-
-    if skill_filter:
-        filtered = df[df["Skills"].str.contains(skill_filter, case=False)]
-        st.dataframe(filtered)
+    st.dataframe(filtered_df)
