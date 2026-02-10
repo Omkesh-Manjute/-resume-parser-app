@@ -1,187 +1,200 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
+import os
 import re
-import docx
-import pdfplumber
+
+# ===============================
+# PAGE CONFIG
+# ===============================
 
 st.set_page_config(layout="wide")
 
-st.title("🔥 ATS PRO MODE — Ultra Recruiter Dashboard")
+st.title("🔥 ATS PRO Resume Dashboard")
 
-# -----------------------
-# TEXT EXTRACTION
-# -----------------------
+UPLOAD_FOLDER = "resumes"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def extract_docx(file):
-    doc=docx.Document(file)
-    return "\n".join([p.text for p in doc.paragraphs])
+# ===============================
+# DATABASE
+# ===============================
 
-def extract_pdf(file):
-    text=""
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            text+=page.extract_text() or ""
-    return text
+conn = sqlite3.connect("candidates.db", check_same_thread=False)
+cursor = conn.cursor()
 
-# -----------------------
-# JD MATCH SCORING
-# -----------------------
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS candidates(
+name TEXT,
+email TEXT,
+phone TEXT,
+skills TEXT,
+file_path TEXT
+)
+""")
 
-def calculate_match(resume_text,jd):
+conn.commit()
 
-    resume_words=set(resume_text.lower().split())
-    jd_words=set(jd.lower().split())
+# ===============================
+# SIMPLE RESUME PARSER
+# ===============================
 
-    if len(jd_words)==0:
-        return 0
+def extract_email(text):
+    match = re.findall(r'\S+@\S+', text)
+    return match[0] if match else ""
 
-    match=len(resume_words & jd_words)/len(jd_words)
+def extract_phone(text):
+    match = re.findall(r'\+?\d[\d -]{8,12}', text)
+    return match[0] if match else ""
 
-    return round(match*100,2)
+def extract_name(filename):
+    return filename.split(".")[0]
 
-# -----------------------
-# BOOLEAN SEARCH
-# -----------------------
+def extract_skills(text):
+    skills_list = ["python","sql","java","aws","azure","data","etl"]
+    found = []
+    for skill in skills_list:
+        if skill.lower() in text.lower():
+            found.append(skill)
+    return ",".join(found)
 
-def boolean_filter(df,query):
+# ===============================
+# SIDEBAR FILTERS
+# ===============================
 
-    if not query:
-        return df
+with st.sidebar:
 
-    result=[]
+    st.header("🔎 Filters")
 
-    for _,row in df.iterrows():
+    name_filter = st.text_input("Candidate Name")
 
-        text=" ".join(row.astype(str)).lower()
+    email_filter = st.text_input("Email")
 
-        if " and " in query:
-            terms=query.split(" and ")
-            if all(t in text for t in terms):
-                result.append(row)
+    skill_filter = st.text_input("Skills / Boolean")
 
-        elif " or " in query:
-            terms=query.split(" or ")
-            if any(t in text for t in terms):
-                result.append(row)
+    delete_mode = st.checkbox("Enable Delete Mode")
 
-        else:
-            if query in text:
-                result.append(row)
+# ===============================
+# UPLOAD SECTION
+# ===============================
 
-    return pd.DataFrame(result)
+st.subheader("Upload Resumes")
 
-# -----------------------
-# PARSE RESUME
-# -----------------------
-
-def parse_resume(text,file,jd):
-
-    email=re.findall(r'\S+@\S+',text)
-    phone=re.findall(r'\+?\d[\d -]{8,12}\d',text)
-
-    skills_keywords=["python","java","aws","azure","sql","react","qa"]
-
-    skills=[s for s in skills_keywords if s in text.lower()]
-
-    match_score=calculate_match(text,jd)
-
-    return{
-        "Name":text.split("\n")[0],
-        "Email":email[0] if email else "",
-        "Phone":phone[0] if phone else "",
-        "Skills":", ".join(skills),
-        "Match Score":match_score,
-        "FullText":text.lower(),
-        "Resume":file
-    }
-
-# -----------------------
-# JD INPUT
-# -----------------------
-
-jd=st.text_area("📄 Paste Job Description for AI Matching")
-
-# -----------------------
-# UPLOAD
-# -----------------------
-
-files=st.file_uploader(
-    "Upload resumes",
+uploaded_files = st.file_uploader(
+    "Upload",
     accept_multiple_files=True,
-    type=["pdf","docx"]
+    type=["pdf","docx","txt"]
 )
 
-if files:
+if uploaded_files:
 
-    data=[]
+    for file in uploaded_files:
 
-    for file in files:
+        path = os.path.join(UPLOAD_FOLDER,file.name)
 
-        if file.name.endswith("docx"):
-            text=extract_docx(file)
-        else:
-            text=extract_pdf(file)
+        with open(path,"wb") as f:
+            f.write(file.getbuffer())
 
-        data.append(parse_resume(text,file,jd))
+        text = file.name  # demo parsing
 
-    df=pd.DataFrame(data)
+        name = extract_name(file.name)
+        email = extract_email(text)
+        phone = extract_phone(text)
+        skills = extract_skills(text)
 
-    # SORT BY MATCH SCORE
-    df=df.sort_values(by="Match Score",ascending=False)
+        cursor.execute(
+            "INSERT INTO candidates VALUES (?,?,?,?,?)",
+            (name,email,phone,skills,path)
+        )
 
-    # -----------------------
-    # FILTER PANEL
-    # -----------------------
+        conn.commit()
 
-    st.subheader("🔎 Recruiter Filters")
+    st.success("Uploaded & Saved")
 
-    col1,col2,col3,col4=st.columns(4)
+# ===============================
+# LOAD DATA
+# ===============================
 
-    name_filter=col1.text_input("Name")
-    email_filter=col2.text_input("Email")
-    skill_filter=col3.text_input("Skill")
-    boolean_input=col4.text_input("Boolean (python AND aws)")
+df = pd.read_sql_query("SELECT * FROM candidates", conn)
 
-    filtered=df.copy()
+# FILTER APPLY
 
-    if name_filter:
-        filtered=filtered[filtered["Name"].str.contains(name_filter,case=False)]
+if name_filter:
+    df = df[df["name"].str.contains(name_filter, case=False)]
 
-    if email_filter:
-        filtered=filtered[filtered["Email"].str.contains(email_filter,case=False)]
+if email_filter:
+    df = df[df["email"].str.contains(email_filter, case=False)]
 
-    if skill_filter:
-        filtered = filtered[filtered["Skills"].str.contains(skill_filter, case=False)]
+if skill_filter:
+    df = df[df["skills"].str.contains(skill_filter, case=False)]
 
+# ===============================
+# SESSION STATE
+# ===============================
 
-    filtered=boolean_filter(filtered,boolean_input.lower())
+if "selected_candidate" not in st.session_state:
+    st.session_state.selected_candidate = None
 
-    # -----------------------
-    # ATS UI
-    # -----------------------
+# ===============================
+# ATS LAYOUT
+# ===============================
 
-    st.subheader("📋 Candidates")
+left, right = st.columns([1,2])
 
-    for i,row in filtered.iterrows():
+# LEFT PANEL (Candidate List)
 
-        with st.container():
+with left:
 
-            colA,colB,colC,colD=st.columns([3,3,3,2])
+    st.subheader("Candidates")
 
-            with colA:
-                st.markdown(f"### 🔹 {row['Name']}")
-                st.download_button("Open Resume",row["Resume"],file_name=row["Resume"].name)
+    for i,row in df.iterrows():
+
+        colA,colB = st.columns([3,1])
+
+        with colA:
+
+            if st.button(row["name"], key=row["file_path"]):
+
+                st.session_state.selected_candidate = row
+
+        if delete_mode:
 
             with colB:
-                st.write("📧",row["Email"])
-                st.write("📞",row["Phone"])
 
-            with colC:
-                st.write("💻",row["Skills"])
+                if st.button("❌", key="del"+row["file_path"]):
 
-            with colD:
-                st.metric("Match %",row["Match Score"])
+                    cursor.execute(
+                        "DELETE FROM candidates WHERE file_path=?",
+                        (row["file_path"],)
+                    )
 
-            with st.expander("Details"):
-                st.write(row["FullText"][:500])
+                    conn.commit()
+                    st.rerun()
 
+# RIGHT PANEL (Preview)
+
+with right:
+
+    st.subheader("Candidate Preview")
+
+    if st.session_state.selected_candidate is not None:
+
+        candidate = st.session_state.selected_candidate
+
+        st.write("Name:", candidate["name"])
+        st.write("Email:", candidate["email"])
+        st.write("Phone:", candidate["phone"])
+        st.write("Skills:", candidate["skills"])
+
+        if os.path.exists(candidate["file_path"]):
+
+            with open(candidate["file_path"],"rb") as f:
+
+                st.download_button(
+                    "Preview Resume",
+                    f,
+                    disabled=True
+                )
+
+    else:
+
+        st.info("Select candidate to preview")
