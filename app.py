@@ -151,7 +151,8 @@ if files:
         filtered=filtered[filtered["Email"].str.contains(email_filter,case=False)]
 
     if skill_filter:
-        filtered=filtered["Skills"].str.contains(skill_filter,case=False)]
+        filtered = filtered[filtered["Skills"].str.contains(skill_filter, case=False)]
+
 
     filtered=boolean_filter(filtered,boolean_input.lower())
 
@@ -183,3 +184,4 @@ if files:
 
             with st.expander("Details"):
                 st.write(row["FullText"][:500])
+
