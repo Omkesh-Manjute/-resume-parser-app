@@ -1,84 +1,107 @@
 import streamlit as st
-import pandas as pd
 import sqlite3
-import os
+import re
 import docx2txt
+import pdfplumber
+import os
+import pandas as pd
 
 st.set_page_config(layout="wide")
 
-# =====================
-# DATABASE
-# =====================
+DB="ats.db"
 
-conn = sqlite3.connect("database.db", check_same_thread=False)
-cursor = conn.cursor()
+# ================= DATABASE =================
 
-cursor.execute("""
+conn=sqlite3.connect(DB,check_same_thread=False)
+c=conn.cursor()
+
+c.execute("""
 CREATE TABLE IF NOT EXISTS candidates(
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 name TEXT,
 email TEXT,
 phone TEXT,
 skills TEXT,
-file_path TEXT
+experience TEXT,
+location TEXT,
+file_path TEXT UNIQUE,
+content TEXT
 )
 """)
 
 conn.commit()
 
-UPLOAD_FOLDER="resumes"
-os.makedirs(UPLOAD_FOLDER,exist_ok=True)
+# ================= PARSER =================
 
-# =====================
-# SIDEBAR FILTER
-# =====================
+def extract_text(file):
+
+    if file.name.endswith(".docx"):
+        return docx2txt.process(file)
+
+    if file.name.endswith(".pdf"):
+        text=""
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text+=page.extract_text() or ""
+        return text
+
+    return ""
+
+def extract_email(text):
+    match=re.search(r'\S+@\S+',text)
+    return match.group() if match else ""
+
+def extract_phone(text):
+    match=re.search(r'(\+?\d[\d\s\-]{8,})',text)
+    return match.group() if match else ""
+
+def extract_name(text):
+    lines=text.split("\n")
+    for l in lines[:5]:
+        if len(l.strip())>3:
+            return l.strip()
+    return "Unknown"
+
+# ================= SIDEBAR FILTER =================
 
 st.sidebar.title("🔎 Filters")
 
 filter_name=st.sidebar.text_input("Candidate Name")
 filter_email=st.sidebar.text_input("Email")
-filter_skill=st.sidebar.text_input("Skills Boolean")
+filter_skill=st.sidebar.text_input("Boolean Skill")
 
 delete_mode=st.sidebar.checkbox("Enable Delete Mode")
 
-# =====================
-# UPLOAD SECTION
-# =====================
+# ================= UPLOAD =================
 
-st.title("🔥 ATS PRO Recruiter Dashboard")
+st.title("🔥 ATS PRO RECRUITER DASHBOARD")
 
-uploaded_file=st.file_uploader("Upload Resume",type=["pdf","docx"])
+uploaded=st.file_uploader("Upload Resume",accept_multiple_files=True,type=["pdf","docx"])
 
-if uploaded_file:
+if uploaded:
 
-    file_path=os.path.join(UPLOAD_FOLDER,uploaded_file.name)
+    for file in uploaded:
 
-    # prevent duplicate insert
-    cursor.execute("SELECT * FROM candidates WHERE file_path=?",(file_path,))
-    exist=cursor.fetchone()
+        content=extract_text(file)
 
-    if not exist:
+        name=extract_name(content)
+        email=extract_email(content)
+        phone=extract_phone(content)
 
-        with open(file_path,"wb") as f:
-            f.write(uploaded_file.getbuffer())
+        skills=",".join(set(re.findall(r'\b(python|sql|azure|aws|java|etl|data)\b',content.lower())))
 
-        name=uploaded_file.name.replace(".pdf","").replace(".docx","")
-        email="demo@email.com"
-        phone="9999999999"
-        skills="python, sql, azure"
+        try:
+            c.execute("""
+            INSERT INTO candidates(name,email,phone,skills,experience,location,file_path,content)
+            VALUES(?,?,?,?,?,?,?,?)
+            """,(name,email,phone,skills,"","",file.name,content))
+            conn.commit()
+        except:
+            pass
 
-        cursor.execute("""
-        INSERT INTO candidates(name,email,phone,skills,file_path)
-        VALUES(?,?,?,?,?)
-        """,(name,email,phone,skills,file_path))
+    st.success("Saved to ATS Database")
 
-        conn.commit()
-
-        st.success("Uploaded & Saved")
-
-# =====================
-# LOAD DATA
-# =====================
+# ================= FETCH DATA =================
 
 df=pd.read_sql("SELECT * FROM candidates",conn)
 
@@ -91,50 +114,44 @@ if filter_email:
 if filter_skill:
     df=df[df["skills"].str.contains(filter_skill,case=False)]
 
-# =====================
-# ATS LAYOUT
-# =====================
+# ================= UI LAYOUT =================
 
-left,right=st.columns([2,3])
+col1,col2=st.columns([1,2])
 
-with left:
+selected_id=None
+
+with col1:
 
     st.subheader("Candidates")
 
     for _,row in df.iterrows():
 
-        container=st.container()
+        with st.container():
 
-        with container:
+            cols=st.columns([4,1])
 
-            c1,c2=st.columns([6,1])
-
-            # UNIQUE KEY FIX
-            if c1.button(
-                f"{row['name']} | {row['email']} | {row['phone']}",
-                key=f"candidate_{row['id']}"
-            ):
-                st.session_state["selected_candidate"]=row.to_dict()
+            if cols[0].button(
+                f"👉 {row['name']} | {row['email']} | {row['phone']}",
+                key=f"cand_{row['id']}"):
+                selected_id=row["id"]
 
             if delete_mode:
-                if c2.button("❌",key=f"delete_{row['id']}"):
-                    cursor.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
+                if cols[1].button("❌",key=f"del_{row['id']}"):
+                    c.execute("DELETE FROM candidates WHERE id=?",(row["id"],))
                     conn.commit()
                     st.rerun()
 
-# =====================
-# RIGHT PANEL
-# =====================
+# ================= RIGHT PANEL =================
 
-with right:
+with col2:
 
-    st.subheader("Candidate Details")
+    if selected_id:
 
-    if "selected_candidate" in st.session_state:
+        data=df[df["id"]==selected_id].iloc[0]
 
-        data=st.session_state["selected_candidate"]
+        st.subheader("Candidate Details")
 
-        st.write("### Name:",data["name"])
+        st.write("Name:",data["name"])
         st.write("Email:",data["email"])
         st.write("Phone:",data["phone"])
         st.write("Skills:",data["skills"])
@@ -143,17 +160,4 @@ with right:
 
         st.subheader("Resume Preview")
 
-        file_path=data["file_path"]
-
-        if file_path.endswith(".docx"):
-
-            text=docx2txt.process(file_path)
-            st.text(text[:2000])
-
-        elif file_path.endswith(".pdf"):
-
-            with open(file_path,"rb") as f:
-                st.download_button("Open PDF",f,"resume.pdf")
-
-    else:
-        st.info("Select candidate from left panel")
+        st.text_area("Full Resume",data["content"],height=600)
